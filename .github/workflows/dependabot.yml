@@ -1,0 +1,88 @@
+name: dependabot
+
+on:
+  schedule:
+    - cron: "0 0 * * *"
+  workflow_dispatch:
+
+jobs:
+  get_current_info:
+    runs-on: ubuntu-latest
+    outputs:
+      pkg_source_version: ${{ steps.info.outputs.pkg_source_version }}
+      pkg_build_version: ${{ steps.info.outputs.pkg_build_version }}
+    steps:
+      - id: checkout
+        name: checkout
+        uses: actions/checkout@v4
+        with:
+          repository: JohnsonRan/InfinityDuck
+          ref: main
+          path: InfinityDuck
+      - id: info
+        name: info
+        run: |
+          echo "pkg_source_version=$(grep "PKG_SOURCE_VERSION:=" InfinityDuck/duck/Makefile | cut -d '=' -f 2)" >> $GITHUB_OUTPUT
+          echo "pkg_build_version=$(grep "PKG_BUILD_VERSION:=" InfinityDuck/duck/Makefile | cut -d '=' -f 2)" >> $GITHUB_OUTPUT
+  get_latest_info:
+    runs-on: ubuntu-latest
+    outputs:
+      commit_date: ${{ steps.info.outputs.commit_date }}
+      commit_sha: ${{ steps.info.outputs.commit_sha }}
+      short_commit_sha: ${{ steps.info.outputs.short_commit_sha }}
+      today: ${{ steps.info.outputs.today }}
+    steps:
+      - id: checkout
+        name: checkout
+        uses: actions/checkout@v4
+        with:
+          repository: 'daeuniverse/dae'
+          ref: 'main'
+          path: 'dae'
+      - id: info
+        name: info
+        run: |
+          echo "commit_date=$(git -C dae log -n 1 --format=%cs)" >> $GITHUB_OUTPUT
+          echo "commit_sha=$(git -C dae rev-parse HEAD)" >> $GITHUB_OUTPUT
+          echo "short_commit_sha=$(git -C dae rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+          echo "today=${today}" >> $GITHUB_OUTPUT
+  update:
+    needs:
+      - get_current_info
+      - get_latest_info
+    if: ${{ needs.get_current_info.outputs.pkg_source_version != needs.get_latest_info.outputs.commit_sha }}
+    runs-on: ubuntu-latest
+    steps:
+      - id: checkout
+        name: checkout
+        uses: actions/checkout@v4
+        with:
+          repository: JohnsonRan/InfinityDuck
+          ref: main
+          path: InfinityDuck
+      - id: update
+        name: update
+        run: |
+          sed -i "s/PKG_RELEASE:=.*/PKG_RELEASE:=1/" InfinityDuck/duck/Makefile
+          sed -i "s/PKG_SOURCE_DATE:=.*/PKG_SOURCE_DATE:=${{ needs.get_latest_info.outputs.commit_date }}/" InfinityDuck/duck/Makefile
+          sed -i "s/PKG_SOURCE_VERSION:=.*/PKG_SOURCE_VERSION:=${{ needs.get_latest_info.outputs.commit_sha }}/" InfinityDuck/duck/Makefile
+          sed -i "s/PKG_BUILD_VERSION:=.*/PKG_BUILD_VERSION:=alpha-${{ needs.get_latest_info.outputs.short_commit_sha }}/" InfinityDuck/duck/Makefile
+          sed -i "s/PKG_VERSION:=.*/PKG_VERSION:=${{ needs.get_latest_info.outputs.today }}/" InfinityDuck/duck/Makefile
+      - id: pr
+        name: pr
+        uses: peter-evans/create-pull-request@v6
+        with:
+          path: InfinityDuck
+          branch: dependabot
+          commit-message: "build: update dae to ${{ needs.get_latest_info.outputs.short_commit_sha }}"
+          title: "build: update dae to ${{ needs.get_latest_info.outputs.short_commit_sha }}"
+          body: |
+            [Changelog](https://github.com/daeuniverse/dae/compare/${{ needs.get_current_info.outputs.pkg_source_version }}...${{  needs.get_latest_info.outputs.commit_sha }})
+
+      - name: Delete workflow runs
+        uses: Mattraks/delete-workflow-runs@main
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          retain_days: 0
+          keep_minimum_runs: 2
